@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Floor Pulse</title>
+<style>
+:root{--bg:#0d1020;--card:#171b33;--fg:#f2f4ff;--mute:#8d93b8;--a:#4f7cff;--b:#ff4fa3}
+body[data-floor=fr]{--a:#3b6cff;--b:#ff4d5e}
+body[data-floor=es]{--a:#ffb703;--b:#e63946}
+body[data-floor=it]{--a:#2ec27e;--b:#ff8c42}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(1200px 600px at 20% -10%,color-mix(in srgb,var(--a) 25%,transparent),transparent),var(--bg);color:var(--fg);font:16px/1.4 system-ui,sans-serif;min-height:100vh}
+header{display:flex;gap:16px;align-items:center;padding:16px 24px;flex-wrap:wrap}
+h1{margin:0;font-size:26px;letter-spacing:.5px}
+h1 span{color:var(--a)}
+.tabs button,.demo button{background:var(--card);color:var(--fg);border:1px solid #2a3060;border-radius:8px;padding:8px 14px;cursor:pointer;font-weight:600}
+.tabs button.on{background:var(--a);color:#000;border-color:var(--a)}
+.demo{margin-left:auto;display:flex;gap:8px;flex-wrap:wrap}
+.status{font-size:13px;color:var(--mute)}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#e55;margin-right:6px}
+.dot.ok{background:#3c6}
+main{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;padding:0 24px 24px}
+.card{background:var(--card);border-radius:14px;padding:16px}
+.card h2{margin:0 0 10px;font-size:15px;text-transform:uppercase;letter-spacing:1.5px;color:var(--mute);display:flex;justify-content:space-between}
+.row{display:grid;grid-template-columns:34px 1fr auto auto;gap:10px;align-items:center;padding:8px 6px;border-radius:8px;transition:transform .5s,background .5s}
+.row .rk{font-weight:800;font-size:18px;color:var(--mute)}
+.row:nth-child(-n+3) .rk{color:var(--a)}
+.row .deals{font-weight:800;font-size:20px}
+.row .calls{color:var(--mute);font-size:13px;min-width:60px;text-align:right}
+.tag{font-size:11px;padding:2px 6px;border-radius:5px;margin-left:6px;background:#2a3060;color:var(--mute)}
+.flash{background:color-mix(in srgb,var(--a) 35%,transparent)}
+.bar{height:8px;border-radius:4px;background:#2a3060;overflow:hidden;margin-top:6px}
+.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--a),var(--b));transition:width .6s}
+.ticker{padding:0 24px 24px;color:var(--mute);font-size:14px}
+.ticker div{padding:2px 0}
+.overlay{position:fixed;inset:0;display:none;align-items:center;justify-content:center;flex-direction:column;text-align:center;z-index:9;padding:24px}
+.overlay.show{display:flex;animation:pop .35s ease-out}
+#takeover{background:radial-gradient(circle,var(--a),var(--b));color:#fff}
+#takeover .big{font-size:clamp(40px,9vw,120px);font-weight:900;text-shadow:0 6px 30px #0006}
+#takeover .sub{font-size:clamp(20px,3vw,40px)}
+#recap,#close{background:#0d1020f2}
+@keyframes pop{from{transform:scale(.9);opacity:0}to{transform:scale(1);opacity:1}}
+.podium{display:flex;gap:16px;align-items:flex-end;margin:24px 0}
+.podium div{background:var(--card);border-radius:12px 12px 0 0;padding:16px 24px;min-width:140px}
+.podium .p1{height:220px;background:var(--a);color:#000}.podium .p2{height:170px}.podium .p3{height:130px}
+.medal{font-size:36px}
+.confetti{position:fixed;top:-20px;width:10px;height:14px;animation:fall linear forwards;z-index:10}
+@keyframes fall{to{transform:translateY(110vh) rotate(720deg)}}
+</style>
+</head>
+<body data-floor="fr">
+<header>
+  <h1>Floor <span>Pulse</span></h1>
+  <div class="tabs" id="tabs"></div>
+  <div class="status"><span class="dot" id="dot"></span><span id="conn">connecting…</span> · latency <b id="lat">–</b></div>
+  <div class="demo">
+    <button id="snd">🔇 Sound off</button>
+    <button data-act="deal">🎯 Fake deal</button>
+    <button data-act="recap">⏱ Hourly recap</button>
+    <button data-act="close">🏆 6PM close</button>
+  </div>
+</header>
+<main id="main"></main>
+<div class="ticker" id="ticker"></div>
+
+<div class="overlay" id="takeover"><div class="sub">DEAL VALIDATED</div><div class="big" id="to-name"></div><div class="sub" id="to-sub"></div></div>
+<div class="overlay" id="recap"><h1 style="font-size:40px">⏱ Hourly recap</h1><div id="recap-body" style="font-size:22px"></div></div>
+<div class="overlay" id="close"><h1 style="font-size:40px">🏆 6PM close</h1><div class="podium" id="podium"></div><div id="pod" style="font-size:24px"></div></div>
+
+<script>
+const FLOORS=[["fr","🇫🇷 Paris"],["es","🇪🇸 Barcelona"],["it","🇮🇹 Milano"]];
+let floor=new URLSearchParams(location.search).get("floor")||"fr", data={}, sound=false, ws, lastRanks={};
+const $=s=>document.querySelector(s);
+const tabs=$("#tabs");
+FLOORS.forEach(([k,l])=>{const b=document.createElement("button");b.textContent=l;b.onclick=()=>{floor=k;render();markTabs()};b.dataset.k=k;tabs.append(b)});
+function markTabs(){tabs.querySelectorAll("button").forEach(b=>b.classList.toggle("on",b.dataset.k===floor));document.body.dataset.floor=floor}
+
+function rows(list){return list.map(a=>`<div class="row" data-id="${a.id}"><div class="rk">${a.rank}</div><div>${a.name}<span class="tag">${a.team}</span></div><div class="deals">${a.deals}</div><div class="calls">${a.calls} calls</div></div>`).join("")}
+function render(){
+  const v=data[floor]; if(!v) return;
+  const tot=v.team_totals, max=Math.max(1,...Object.values(tot));
+  $("#main").innerHTML=`
+  <div class="card"><h2>${floor.toUpperCase()} · overall <span>deals</span></h2>${rows(v.overall)}</div>
+  ${["iOS","CSS"].map(t=>`<div class="card"><h2>Team ${t} <span>${tot[t]} deals</span></h2><div class="bar"><i style="width:${tot[t]/max*100}%"></i></div>${rows(v.teams[t])}</div>`).join("")}`;
+}
+function flash(id){document.querySelectorAll(`[data-id="${id}"]`).forEach(e=>{e.classList.add("flash");setTimeout(()=>e.classList.remove("flash"),1200)})}
+
+let ac; function beep(freqs){if(!sound)return;ac=ac||new AudioContext();freqs.forEach((f,i)=>{const o=ac.createOscillator(),g=ac.createGain();o.frequency.value=f;o.type="triangle";o.connect(g);g.connect(ac.destination);const t=ac.currentTime+i*.14;g.gain.setValueAtTime(.25,t);g.gain.exponentialRampToValueAtTime(.001,t+.4);o.start(t);o.stop(t+.45)})}
+$("#snd").onclick=e=>{sound=!sound;e.target.textContent=sound?"🔊 Sound on":"🔇 Sound off";beep([660])};
+
+function show(id,ms){const o=$("#"+id);o.classList.add("show");clearTimeout(o._t);o._t=setTimeout(()=>o.classList.remove("show"),ms)}
+document.querySelectorAll(".overlay").forEach(o=>o.onclick=()=>o.classList.remove("show"));
+function confetti(){const c=["#ff4d5e","#ffb703","#2ec27e","#3b6cff","#fff"];for(let i=0;i<60;i++){const d=document.createElement("i");d.className="confetti";d.style.left=Math.random()*100+"vw";d.style.background=c[i%5];d.style.animationDuration=2+Math.random()*2+"s";document.body.append(d);setTimeout(()=>d.remove(),4200)}}
+function log(t){const d=document.createElement("div");d.textContent=new Date().toLocaleTimeString()+"  "+t;$("#ticker").prepend(d);while($("#ticker").children.length>6)$("#ticker").lastChild.remove()}
+
+function onMsg(m){
+  if(m.type==="state"){data=m;render();return}
+  if(m.type==="deal"){
+    $("#lat").textContent=Math.max(0,Math.round(Date.now()-m.ts*1000))+" ms";
+    log(`🎯 ${m.agent.name} (${m.floor}/${m.agent.team}) validated a deal`);
+    if(m.floor===floor){$("#to-name").textContent=m.agent.name;$("#to-sub").textContent=`${m.agent.team} · ${m.agent.deals} deals today`;show("takeover",2500);beep([523,659,784,1047]);confetti();setTimeout(()=>flash(m.agent.id),100)}
+  }
+  if(m.type==="recap"&&m.floor===floor){
+    $("#recap-body").innerHTML=(m.moves.length?m.moves.map(x=>`<p><b>${x.name}</b> ▲ #${x.from} → #${x.to}${x.overtook.length?` — overtook ${x.overtook.join(", ")}`:""}</p>`).join(""):"<p>No change in the ranking this hour.</p>")+`<p>👑 Leader: <b>${m.leader.name}</b> (${m.leader.deals} deals)</p>`;
+    show("recap",7000);beep([440,554]);
+  }
+  if(m.type==="close"&&m.floor===floor){
+    const med=["🥇","🥈","🥉"],cls=["p1","p2","p3"],order=[1,0,2];
+    $("#podium").innerHTML=order.filter(i=>m.podium[i]).map(i=>`<div class="${cls[i]}"><div class="medal">${med[i]}</div><b>${m.podium[i].name}</b><br>${m.podium[i].deals} deals</div>`).join("");
+    $("#pod").innerHTML=`Pod of the week: <b>${m.pod_of_the_week.team}</b> (${m.pod_of_the_week.deals} deals)`;
+    show("close",10000);beep([392,523,659,784]);confetti();
+  }
+}
+function connect(){
+  ws=new WebSocket((location.protocol==="https:"?"wss://":"ws://")+location.host+"/ws");
+  ws.onopen=()=>{$("#dot").classList.add("ok");$("#conn").textContent="live"};
+  ws.onmessage=e=>onMsg(JSON.parse(e.data));
+  ws.onclose=()=>{$("#dot").classList.remove("ok");$("#conn").textContent="reconnecting…";setTimeout(connect,1500)};
+}
+document.querySelectorAll("[data-act]").forEach(b=>b.onclick=()=>fetch(`/demo/${b.dataset.act}/${floor}`,{method:"POST"}));
+markTabs();connect();
+</script>
+</body>
+</html>
